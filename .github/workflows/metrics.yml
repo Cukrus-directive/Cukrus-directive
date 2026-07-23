@@ -24,9 +24,6 @@ jobs:
           repositories_forks: yes
           repositories_affiliations: owner, collaborator, organization_member
 
-          # Commit attribution (add every email you've committed with)
-          commits_authoring: YOUR_USERNAME, personal@email.com, other@email.com
-
           # Languages activity
           plugin_languages: yes
           plugin_languages_indepth: yes
