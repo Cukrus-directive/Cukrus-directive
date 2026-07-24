@@ -18,11 +18,15 @@ jobs:
           template: classic
           base: header
           config_timezone: Australia/Sydney
+          debug: yes
 
           # Repo discovery
           repositories: 200
           repositories_forks: yes
           repositories_affiliations: owner, collaborator, organization_member
+
+
+          commits_authoring: Cukrus-directive, edvinas.kubilius@cyber.orro.group, edvinas.kubilius@orro.group
 
           # Languages activity
           plugin_languages: yes
