@@ -20,24 +20,25 @@ jobs:
           config_timezone: Australia/Sydney
           debug: yes
 
-          # Repo discovery
           repositories: 200
           repositories_forks: yes
           repositories_affiliations: owner, collaborator, organization_member
-
-
           commits_authoring: Cukrus-directive, edvinas.kubilius@cyber.orro.group, edvinas.kubilius@orro.group
 
-          # Languages activity
+          # All-time lines changed
+          plugin_lines: yes
+          plugin_lines_sections: base
+          plugin_lines_repositories_limit: 0
+
+          # Languages (already all-time)
           plugin_languages: yes
           plugin_languages_indepth: yes
           plugin_languages_analysis_timeout: 30
-          plugin_languages_sections: most-used, recently-used
+          plugin_languages_sections: most-used
           plugin_languages_limit: 8
-          plugin_languages_details: percentage
+          plugin_languages_details: percentage, lines
           plugin_languages_ignored: html, css
-          plugin_languages_recent_days: 30
 
-          # Isometric commit calendar
-          plugin_isocalendar: yes
-          plugin_isocalendar_duration: full-year
+          # Full-history commit calendar (every year)
+          plugin_calendar: yes
+          plugin_calendar_limit: 0
