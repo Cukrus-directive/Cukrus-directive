@@ -1,0 +1,47 @@
+name: All-time stats
+on:
+  schedule: [{cron: "0 18 * * *"}]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gather all-time stats
+        env:
+          GH_TOKEN: ${{ secrets.METRICS_TOKEN }}
+          AUTHORS: "cukrus-directive|edvinas.kubilius@cyber.orro.group|edvinas.kubilius@orro.group|users.noreply.github.com"
+        run: |
+          mkdir -p /tmp/repos && cd /tmp/repos
+          # list all repos incl private
+          gh repo list Cukrus-directive --limit 200 --json nameWithOwner -q '.[].nameWithOwner' > repos.txt
+
+          total_commits=0; total_added=0; total_removed=0; total_files=0
+          while read -r repo; do
+            git clone --quiet --filter=blob:none "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" work || continue
+            cd work
+            c=$(git log --all --author-date-order --perl-regexp --author="${AUTHORS}" --oneline | wc -l)
+            read a r f <<< $(git log --all --perl-regexp --author="${AUTHORS}" --pretty=tformat: --numstat \
+              | awk '{a+=$1; r+=$2; f++} END {print a+0, r+0, f+0}')
+            total_commits=$((total_commits+c)); total_added=$((total_added+a))
+            total_removed=$((total_removed+r)); total_files=$((total_files+f))
+            cd .. && rm -rf work
+          done < repos.txt
+
+          cd "$GITHUB_WORKSPACE"
+          cat > STATS.md << EOF
+          ### All-time stats (every repo, every year)
+          | Commits | Lines added | Lines removed | Files touched |
+          |---|---|---|---|
+          | ${total_commits} | ${total_added} | ${total_removed} | ${total_files} |
+          _Updated: $(date -u +%Y-%m-%d)_
+          EOF
+
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add STATS.md && git commit -m "update all-time stats" && git push || true
