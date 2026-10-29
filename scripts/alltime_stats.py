@@ -150,18 +150,18 @@ def collect(repos, authors, cache, fetch):
 
         rc = run(["git", "-C", path, "log", "--all", "--no-merges",
                   "-P", f"--author={authors}", "--pretty=format:%H|%ad",
-                  "--date=format:%Y-%m-%d"], check=False)
+                  "--date=format:%Y-%m-%d %H:%M"], check=False)
         seen = set()
         for line in rc.stdout.splitlines():
             if "|" not in line:
                 continue
-            h, day = line.split("|", 1)
+            h, ts = line.split("|", 1)
             if h in seen:
                 continue
             seen.add(h)
-            year_counts[int(day[:4])] += 1
-            first = day if first is None or day < first else first
-            last = day if last is None or day > last else last
+            year_counts[int(ts[:4])] += 1
+            first = ts if first is None or ts < first else first
+            last = ts if last is None or ts > last else last
         commits = len(seen)
 
         rn = run(["git", "-C", path, "log", "--all", "--no-merges",
@@ -217,8 +217,35 @@ def heat_level(n, peak):
 def fmt_day(day):
     if not day:
         return "n/a"
-    d = datetime.strptime(day, "%Y-%m-%d")
+    d = datetime.strptime(day[:10], "%Y-%m-%d")
     return f"{d.day} {d:%b %Y}"
+
+
+# E is the eye; picked from the hour (author's local time) of the latest commit
+GODZILLA = r"""
+                 ______
+          /\   _/  E   \__
+       /\/  \_/    _______>
+      /  /\/      /VVVV
+     /\/\/   _    \^^^^\
+    /\/\/   / \_   `---'
+   /\/\/   (  _/<
+  /\/\/     \  \
+ /         _/ \ \
+(_________/  _/  \_
+            /___\ \__\
+""".strip("\n").splitlines()
+
+
+def godzilla_eye(last):
+    hour = int(last[11:13]) if last and len(last) >= 13 else 12
+    if hour < 5:
+        return "@", "#f85149"   # feral: committing at 3am
+    if hour < 9:
+        return "-", None        # half-asleep
+    if hour < 18:
+        return "o", None        # office hours
+    return "O", None            # evening, wide awake
 
 
 def render_svg(lang_lines, year_counts, meta, out):
@@ -227,8 +254,16 @@ def render_svg(lang_lines, year_counts, meta, out):
     total_lang = sum(chart.values()) or 1
     top = sorted(chart.items(), key=lambda kv: -kv[1])[:6]
 
-    parts = [f'<text x="0" y="11">{meta["first"]} – {meta["last"]}</text>']
-    y = 22
+    eye, eye_color = meta["eye"]
+    eye_svg = f'<tspan fill="{eye_color}">{eye}</tspan>' if eye_color else eye
+    parts = []
+    for i, line in enumerate(GODZILLA):
+        line = esc(line).replace("E", eye_svg)
+        parts.append(f'<text x="0" y="{11 + i * 12}" class="zilla">{line}</text>')
+    y = 11 + len(GODZILLA) * 12 + 10
+
+    parts.append(f'<text x="0" y="{y}">{meta["first"]} – {meta["last"]}</text>')
+    y += 11
 
     # one cell per year, shaded relative to the busiest year
     years = list(range(meta["year_lo"], meta["year_hi"] + 1))
@@ -269,7 +304,9 @@ def render_svg(lang_lines, year_counts, meta, out):
 
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
            f'viewBox="0 0 {W} {H}" font-family="\'Segoe UI\', Ubuntu, Helvetica, Arial, '
-           f'sans-serif" font-size="11" fill="#8b949e">{"".join(parts)}</svg>\n')
+           f'sans-serif" font-size="11" fill="#8b949e"><style>.zilla {{ font-family: '
+           f'ui-monospace, Menlo, Consolas, monospace; white-space: pre; }}</style>'
+           f'{"".join(parts)}</svg>\n')
     with open(out, "w", encoding="utf-8") as f:
         f.write(svg)
     print(f"wrote {out} ({W}x{H})")
@@ -313,6 +350,7 @@ def main():
     meta = {
         "first": fmt_day(first),
         "last": fmt_day(last),
+        "eye": godzilla_eye(last),
         "year_lo": min(year_counts, default=year_now),
         "year_hi": max(max(year_counts, default=year_now), year_now),
     }
