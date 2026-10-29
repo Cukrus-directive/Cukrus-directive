@@ -135,7 +135,8 @@ def ext_to_lang(path):
 def collect(repos, authors, cache, fetch):
     totals = {"commits": 0, "added": 0, "removed": 0, "files": 0}
     lang_lines = defaultdict(int)
-    month_counts = defaultdict(int)
+    year_counts = defaultdict(int)
+    first = last = None
     per_repo = []
     reached = 0
 
@@ -149,16 +150,18 @@ def collect(repos, authors, cache, fetch):
 
         rc = run(["git", "-C", path, "log", "--all", "--no-merges",
                   "-P", f"--author={authors}", "--pretty=format:%H|%ad",
-                  "--date=format:%Y-%m"], check=False)
+                  "--date=format:%Y-%m-%d"], check=False)
         seen = set()
         for line in rc.stdout.splitlines():
             if "|" not in line:
                 continue
-            h, ym = line.split("|", 1)
+            h, day = line.split("|", 1)
             if h in seen:
                 continue
             seen.add(h)
-            month_counts[ym] += 1
+            year_counts[int(day[:4])] += 1
+            first = day if first is None or day < first else first
+            last = day if last is None or day > last else last
         commits = len(seen)
 
         rn = run(["git", "-C", path, "log", "--all", "--no-merges",
@@ -186,7 +189,7 @@ def collect(repos, authors, cache, fetch):
         per_repo.append({"name": name, "commits": commits, "added": added,
                          "removed": removed, "reached": True})
 
-    return totals, lang_lines, month_counts, per_repo, reached
+    return totals, lang_lines, year_counts, (first, last), per_repo, reached
 
 
 def human(n):
@@ -205,139 +208,68 @@ def esc(s):
 HEAT = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
 
 
-def heat_level(n):
-    if n <= 0:
+def heat_level(n, peak):
+    if n <= 0 or peak <= 0:
         return 0
-    if n <= 3:
-        return 1
-    if n <= 8:
-        return 2
-    if n <= 15:
-        return 3
-    return 4
+    return max(1, min(4, -(-4 * n // peak)))
 
 
-def render_svg(lang_lines, month_counts, meta, out):
-    W = 480
-    pad = 24
+def fmt_day(day):
+    if not day:
+        return "n/a"
+    d = datetime.strptime(day, "%Y-%m-%d")
+    return f"{d.day} {d:%b %Y}"
+
+
+def render_svg(lang_lines, year_counts, meta, out):
+    W = 360
     chart = {k: v for k, v in lang_lines.items() if k not in LANG_IGNORE_FOR_CHART}
     total_lang = sum(chart.values()) or 1
-    top = [(l, v) for l, v in sorted(chart.items(), key=lambda kv: -kv[1])
-           if 100 * v / total_lang >= 0.1][:8]
+    top = sorted(chart.items(), key=lambda kv: -kv[1])[:6]
 
-    parts = []
-    parts.append(
-        f'<text x="{pad}" y="34" class="title">Coding activity</text>'
-        f'<text x="{pad}" y="52" class="muted">Summary data</text>'
-    )
+    parts = [f'<text x="0" y="11">{meta["first"]} – {meta["last"]}</text>']
+    y = 22
 
-    since = meta["since"]
-    breadth = (f'{meta["reached"]} repositories&#160;&#160;·&#160;&#160;'
-               f'{meta["languages"]} languages&#160;&#160;·&#160;&#160;'
-               f'active since {since}')
-    parts.append(f'<text x="{pad}" y="74" class="breadth">{breadth}</text>')
-    y = 90
-    parts.append(f'<line x1="{pad}" y1="{y}" x2="{W-pad}" y2="{y}" class="rule"/>')
-    y += 24
-
-    # contribution matrix: years x months, bucketed color
-    parts.append(f'<text x="{pad}" y="{y}" class="section">Contribution activity</text>')
-    lg = 11
-    lx = W - pad - (5 * (lg + 2)) - 34
-    parts.append(f'<text x="{lx-6}" y="{y}" text-anchor="end" class="muted">Less</text>')
-    for i, c in enumerate(HEAT):
-        parts.append(f'<rect x="{lx + i*(lg+2)}" y="{y-9}" width="{lg}" height="{lg}" '
-                     f'rx="2" fill="{c}"/>')
-    parts.append(f'<text x="{lx + 5*(lg+2) + 4}" y="{y}" class="muted">More</text>')
-    y += 12
-
-    year_gutter = 30
-    grid_x0 = pad + year_gutter
+    # one cell per year, shaded relative to the busiest year
+    years = list(range(meta["year_lo"], meta["year_hi"] + 1))
+    peak = max(year_counts.values(), default=0)
     gap = 3
-    cellw = (W - grid_x0 - pad - 11 * gap) / 12
-    cellh = 13
-    vgap = 4
-    months = "JFMAMJJASOND"
-
-    for c in range(12):
-        cx = grid_x0 + c * (cellw + gap) + cellw / 2
-        parts.append(f'<text x="{cx:.1f}" y="{y}" text-anchor="middle" '
-                     f'class="axis">{months[c]}</text>')
-    y += 8
-
-    year_lo = meta["year_lo"]
-    year_hi = meta["year_hi"]
-    for r, yr in enumerate(range(year_lo, year_hi + 1)):
-        row_y = y + r * (cellh + vgap)
-        parts.append(f'<text x="{pad}" y="{row_y + cellh - 2:.1f}" class="axis">{yr}</text>')
-        for c in range(12):
-            n = month_counts.get(f"{yr}-{c+1:02d}", 0)
-            cx = grid_x0 + c * (cellw + gap)
-            parts.append(f'<rect x="{cx:.1f}" y="{row_y:.1f}" width="{cellw:.1f}" '
-                         f'height="{cellh}" rx="2" fill="{HEAT[heat_level(n)]}"/>')
-    y += (year_hi - year_lo + 1) * (cellh + vgap) + 12
-
-    parts.append(f'<line x1="{pad}" y1="{y}" x2="{W-pad}" y2="{y}" class="rule"/>')
-    y += 26
+    cellw = (W - (len(years) - 1) * gap) / len(years)
+    cellh = 14
+    for i, yr in enumerate(years):
+        cx = i * (cellw + gap)
+        fill = HEAT[heat_level(year_counts.get(yr, 0), peak)]
+        parts.append(f'<rect x="{cx:.1f}" y="{y}" width="{cellw:.1f}" height="{cellh}" '
+                     f'rx="2" fill="{fill}"/>'
+                     f'<text x="{cx + cellw / 2:.1f}" y="{y + cellh + 12}" '
+                     f'text-anchor="middle">{yr}</text>')
+    y += cellh + 26
 
     if top:
-        parts.append(f'<text x="{pad}" y="{y}" class="section">Languages '
-                     f'<tspan class="muted">(share of code authored)</tspan></text>')
-        y += 16
-        bar_w = W - 2 * pad
-        bar_h = 10
-        x = pad
-        parts.append(f'<g transform="translate(0,{y})">')
+        x = 0
         for lang, v in top:
-            seg = bar_w * v / total_lang
+            seg = W * v / total_lang
             color = LANG_COLOR.get(lang, LANG_COLOR["Other"])
-            parts.append(f'<rect x="{x:.1f}" y="0" width="{max(seg,0.5):.1f}" '
-                         f'height="{bar_h}" fill="{color}"/>')
+            parts.append(f'<rect x="{x:.1f}" y="{y}" width="{max(seg, 0.5):.1f}" '
+                         f'height="6" fill="{color}"/>')
             x += seg
-        parts.append("</g>")
-        y += bar_h + 22
+        y += 22
 
-        leg_col_w = (W - 2 * pad) / 2
+        col_w = W / 3
         for i, (lang, v) in enumerate(top):
-            col = i % 2
-            row = i // 2
-            lx = pad + col * leg_col_w
-            ly = y + row * 20
-            pct = 100 * v / total_lang
+            lx = (i % 3) * col_w
+            ly = y + (i // 3) * 17
             color = LANG_COLOR.get(lang, LANG_COLOR["Other"])
-            parts.append(
-                f'<circle cx="{lx+5:.0f}" cy="{ly-4:.0f}" r="5" fill="{color}"/>'
-                f'<text x="{lx+16:.0f}" y="{ly:.0f}" class="legend">'
-                f'{esc(lang)} <tspan class="muted">{pct:.1f}%</tspan></text>'
-            )
-        rows = (len(top) + 1) // 2
-        y += rows * 20 + 6
+            parts.append(f'<circle cx="{lx + 4:.0f}" cy="{ly - 4}" r="4" fill="{color}"/>'
+                         f'<text x="{lx + 12:.0f}" y="{ly}">{esc(lang)} '
+                         f'{100 * v / total_lang:.0f}%</text>')
+        y += ((len(top) - 1) // 3) * 17
 
-    y += 8
-    parts.append(f'<line x1="{pad}" y1="{y}" x2="{W-pad}" y2="{y}" class="rule"/>')
-    y += 20
-    parts.append(
-        f'<text x="{pad}" y="{y}" class="muted">'
-        f'includes private repositories · updated {meta["date"]}</text>'
-    )
-    y += 20
+    H = y + 4
 
-    H = y + pad - 12
-
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif">
-  <style>
-    .title {{ font-size: 17px; font-weight: 600; fill: #24292f; }}
-    .section {{ font-size: 13px; font-weight: 600; fill: #24292f; }}
-    .breadth {{ font-size: 12px; font-weight: 600; fill: #24292f; }}
-    .axis {{ font-size: 9px; fill: #8b949e; }}
-    .muted {{ font-size: 11px; font-weight: 400; fill: #8b949e; }}
-    .legend {{ font-size: 12px; fill: #24292f; }}
-    .rule {{ stroke: #d8dee4; stroke-width: 1; }}
-  </style>
-  <rect x="0.5" y="0.5" width="{W-1}" height="{H-1}" rx="6" fill="#ffffff" stroke="#d0d7de"/>
-  {''.join(parts)}
-</svg>
-'''
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+           f'viewBox="0 0 {W} {H}" font-family="\'Segoe UI\', Ubuntu, Helvetica, Arial, '
+           f'sans-serif" font-size="11" fill="#8b949e">{"".join(parts)}</svg>\n')
     with open(out, "w", encoding="utf-8") as f:
         f.write(svg)
     print(f"wrote {out} ({W}x{H})")
@@ -367,7 +299,7 @@ def main():
         discover(repos, args.cache, fetch)
         return
 
-    totals, lang_lines, month_counts, per_repo, reached = collect(
+    totals, lang_lines, year_counts, (first, last), per_repo, reached = collect(
         repos, args.authors, args.cache, fetch)
 
     print("\n=== per-repo (commits by identity) ===", file=sys.stderr)
@@ -377,22 +309,14 @@ def main():
                   file=sys.stderr)
     print(f"\nTOTALS: {totals}", file=sys.stderr)
 
-    active_repos = sum(1 for r in per_repo if r.get("commits"))
-    languages = len([k for k in lang_lines if k not in LANG_IGNORE_FOR_CHART])
     year_now = datetime.now(timezone.utc).year
-    years = sorted({int(k[:4]) for k in month_counts if k[:4].isdigit()})
-    year_lo = years[0] if years else year_now
-    year_hi = max(years[-1] if years else year_now, year_now)
-
     meta = {
-        "reached": active_repos,
-        "languages": languages,
-        "since": year_lo,
-        "year_lo": year_lo,
-        "year_hi": year_hi,
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "first": fmt_day(first),
+        "last": fmt_day(last),
+        "year_lo": min(year_counts, default=year_now),
+        "year_hi": max(max(year_counts, default=year_now), year_now),
     }
-    render_svg(lang_lines, month_counts, meta, args.out)
+    render_svg(lang_lines, year_counts, meta, args.out)
 
 
 if __name__ == "__main__":
